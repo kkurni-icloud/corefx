@@ -366,6 +366,7 @@ namespace System.Data.SqlClient
                             || timeout.MillisecondsRemaining < transientRetryIntervalInMilliSeconds
                             || !IsTransientError(sqlex))
                         {
+                            Console.WriteLine("SqlInternalConnectionTDS ex : " + sqlex);
                             throw sqlex;
                         }
                         else
@@ -1400,6 +1401,8 @@ namespace System.Data.SqlClient
 
             _parser._physicalStateObj.SniContext = SniContext.Snix_Connect;
 
+            Console.WriteLine("Before Connect. Press Any key to continue ...");
+            Console.ReadLine();
             _parser.Connect(serverInfo,
                             this,
                             ignoreSniOpenTimeout,
@@ -1412,12 +1415,18 @@ namespace System.Data.SqlClient
             _timeoutErrorInternal.EndPhase(SqlConnectionTimeoutErrorPhase.ConsumePreLoginHandshake);
             _timeoutErrorInternal.SetAndBeginPhase(SqlConnectionTimeoutErrorPhase.LoginBegin);
 
+            Console.WriteLine("Before Login. Press Any key to continue ...");
+            Console.ReadLine();
             _parser._physicalStateObj.SniContext = SniContext.Snix_Login;
             this.Login(serverInfo, timeout);
+            
 
             _timeoutErrorInternal.EndPhase(SqlConnectionTimeoutErrorPhase.ProcessConnectionAuth);
             _timeoutErrorInternal.SetAndBeginPhase(SqlConnectionTimeoutErrorPhase.PostLogin);
 
+
+            Console.WriteLine("Before Complete Login. Press Any key to continue ...");
+            Console.ReadLine();
             CompleteLogin(!ConnectionOptions.Pooling);
 
             _timeoutErrorInternal.EndPhase(SqlConnectionTimeoutErrorPhase.PostLogin);

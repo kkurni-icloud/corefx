@@ -57,7 +57,7 @@ namespace System.Data.SqlClient.SNI
         /// <param name="packet">SNI packet</param>
         /// <returns>SNI error code</returns>
         public abstract uint ReceiveAsync(ref SNIPacket packet);
-
+        
         /// <summary>
         /// Enable SSL
         /// </summary>

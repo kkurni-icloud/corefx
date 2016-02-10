@@ -12,6 +12,7 @@ using System.Data.SqlTypes;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -296,6 +297,18 @@ namespace System.Data.SqlClient
             }
         }
 
+        public static void ConsoleWriteBytes(byte[] bytes)
+        {
+            if (bytes == null)
+            {
+                Console.WriteLine("NULL");
+            }
+            else
+            {
+                Console.WriteLine(String.Join(",", bytes).TrimEnd(new char[] { '0', ',' }));
+            }
+        }
+
         internal void Connect(ServerInfo serverInfo, SqlInternalConnectionTds connHandler, bool ignoreSniOpenTimeout, long timerExpire, bool encrypt, bool trustServerCert, bool integratedSecurity, bool withFailover)
         {
             if (_state != TdsParserState.Closed)
@@ -320,7 +333,7 @@ namespace System.Data.SqlClient
 #if !MANAGED_SNI
             if (integratedSecurity)
             {
-                LoadSSPILibrary();
+                LoadSSPILibrary();            
                 // now allocate proper length of buffer
                 _sniSpnBuffer = new byte[SNINativeMethodWrapper.SniMaxComposedSpnLength];
             }
@@ -337,13 +350,13 @@ namespace System.Data.SqlClient
             _connHandler.TimeoutErrorInternal.SetAndBeginPhase(SqlConnectionTimeoutErrorPhase.InitializeConnection);
 
             bool fParallel = _connHandler.ConnectionOptions.MultiSubnetFailover;
-
+            
 #if MANAGED_SNI
             _physicalStateObj.CreateConnectionHandle(serverInfo.ExtendedServerName, ignoreSniOpenTimeout, timerExpire,
-                        out instanceName, _sniSpnBuffer, false, true, fParallel);
+                        out instanceName, _sniSpnBuffer, false, true, fParallel, integratedSecurity);
 #else
             _physicalStateObj.CreatePhysicalSNIHandle(serverInfo.ExtendedServerName, ignoreSniOpenTimeout, timerExpire,
-                        out instanceName, _sniSpnBuffer, false, true, fParallel);
+                        out instanceName, _sniSpnBuffer, false, true, fParallel);            
 #endif // MANAGED_SNI
 
             if (TdsEnums.SNI_SUCCESS != _physicalStateObj.Status)
@@ -387,14 +400,14 @@ namespace System.Data.SqlClient
 #endif // MANAGED_SNI
 
             Debug.Assert(result == TdsEnums.SNI_SUCCESS, "Unexpected failure state upon calling SniGetConnectionId");
-
+ 
             SendPreLoginHandshake(instanceName, encrypt);
 
             _connHandler.TimeoutErrorInternal.EndPhase(SqlConnectionTimeoutErrorPhase.SendPreLoginHandshake);
             _connHandler.TimeoutErrorInternal.SetAndBeginPhase(SqlConnectionTimeoutErrorPhase.ConsumePreLoginHandshake);
 
             _physicalStateObj.SniContext = SniContext.Snix_PreLogin;
-
+            
             PreLoginHandshakeStatus status = ConsumePreLoginHandshake(encrypt, trustServerCert, integratedSecurity, out marsCapable);
 
             if (status == PreLoginHandshakeStatus.InstanceFailure)
@@ -404,7 +417,7 @@ namespace System.Data.SqlClient
                 // On Instance failure re-connect and flush SNI named instance cache.
                 _physicalStateObj.SniContext = SniContext.Snix_Connect;
 #if MANAGED_SNI
-                _physicalStateObj.CreateConnectionHandle(serverInfo.ExtendedServerName, ignoreSniOpenTimeout, timerExpire, out instanceName, _sniSpnBuffer, true, true, fParallel);
+                _physicalStateObj.CreateConnectionHandle(serverInfo.ExtendedServerName, ignoreSniOpenTimeout, timerExpire, out instanceName, _sniSpnBuffer, true, true, fParallel, integratedSecurity);
 #else
                 _physicalStateObj.CreatePhysicalSNIHandle(serverInfo.ExtendedServerName, ignoreSniOpenTimeout, timerExpire, out instanceName, _sniSpnBuffer, true, true, fParallel);
 #endif // MANAGED_SNI
@@ -422,7 +435,7 @@ namespace System.Data.SqlClient
 #endif // MANAGED_SNI
 
                 Debug.Assert(retCode == TdsEnums.SNI_SUCCESS, "Unexpected failure state upon calling SniGetConnectionId");
-
+                
                 SendPreLoginHandshake(instanceName, encrypt);
                 status = ConsumePreLoginHandshake(encrypt, trustServerCert, integratedSecurity, out marsCapable);
 
@@ -3039,7 +3052,7 @@ namespace System.Data.SqlClient
             {
                 return false;
             }
-
+            
             if (!stateObj.TryReadByte(out byteLen))
             {
                 return false;
@@ -6021,31 +6034,50 @@ namespace System.Data.SqlClient
             }
             else
             {
-                if (rec.useSSPI)
+#if !MANAGED_SNI
+
+                // now allocate proper length of buffer, and set length
+                outSSPIBuff = new byte[s_maxSSPILength];
+                outSSPILength = s_maxSSPILength;
+
+                // Call helper function for SSPI data and actual length.
+                // Since we don't have SSPI data from the server, send null for the
+                // byte[] buffer and 0 for the int length.
+                Debug.Assert(SniContext.Snix_Login == _physicalStateObj.SniContext, String.Format((IFormatProvider)null, "Unexpected SniContext. Expecting Snix_Login, actual value is '{0}'", _physicalStateObj.SniContext));
+                _physicalStateObj.SniContext = SniContext.Snix_LoginSspi;
+                SSPIData(null, 0, outSSPIBuff, ref outSSPILength);
+                if (outSSPILength > Int32.MaxValue)
                 {
-                    // now allocate proper length of buffer, and set length
-                    outSSPIBuff = new byte[s_maxSSPILength];
-                    outSSPILength = s_maxSSPILength;
-
-                    // Call helper function for SSPI data and actual length.
-                    // Since we don't have SSPI data from the server, send null for the
-                    // byte[] buffer and 0 for the int length.
-                    Debug.Assert(SniContext.Snix_Login == _physicalStateObj.SniContext, String.Format((IFormatProvider)null, "Unexpected SniContext. Expecting Snix_Login, actual value is '{0}'", _physicalStateObj.SniContext));
-                    _physicalStateObj.SniContext = SniContext.Snix_LoginSspi;
-                    SSPIData(null, 0, outSSPIBuff, ref outSSPILength);
-                    if (outSSPILength > Int32.MaxValue)
-                    {
-                        throw SQL.InvalidSSPIPacketSize();  // SqlBu 332503
-                    }
-                    _physicalStateObj.SniContext = SniContext.Snix_Login;
-
-                    checked
-                    {
-                        length += (Int32)outSSPILength;
-                    }
+                    throw SQL.InvalidSSPIPacketSize();  // SqlBu 332503
                 }
-            }
+                _physicalStateObj.SniContext = SniContext.Snix_Login;
+#else
+                // Call helper function for SSPI data and actual length.
+                // Since we don't have SSPI data from the server, send null for the
+                // byte[] buffer and 0 for the int length.
+                Debug.Assert(SniContext.Snix_Login == _physicalStateObj.SniContext, String.Format((IFormatProvider)null, "Unexpected SniContext. Expecting Snix_Login, actual value is '{0}'", _physicalStateObj.SniContext));
+                _physicalStateObj.SniContext = SniContext.Snix_LoginSspi;
 
+                Console.WriteLine("Before get sspitoken");
+                outSSPIBuff = SNIProxy.Singleton.GetSSPIClientContext(_physicalStateObj.Handle);
+                outSSPILength = (UInt32) outSSPIBuff.Length;
+
+                Console.WriteLine("after get sspitoken");
+                ConsoleWriteBytes(outSSPIBuff);
+
+                if (outSSPILength > Int32.MaxValue)
+                {
+                    throw SQL.InvalidSSPIPacketSize();  // SqlBu 332503
+                }
+                _physicalStateObj.SniContext = SniContext.Snix_Login;
+
+
+#endif
+                checked
+                {
+                    length += (Int32)outSSPILength;
+                }     
+            }
             int feOffset = length;
 
             if (useFeatureExt)
@@ -6236,7 +6268,6 @@ namespace System.Data.SqlClient
                 if (!rec.useSSPI)
                 {
                     WriteString(userName, _physicalStateObj);
-
                     {
                         _physicalStateObj.WriteByteArray(encryptedPassword, encryptedPasswordLengthInBytes, 0);
                     }
@@ -6257,7 +6288,9 @@ namespace System.Data.SqlClient
 
                 // send over SSPI data if we are using SSPI
                 if (rec.useSSPI)
+                {
                     _physicalStateObj.WriteByteArray(outSSPIBuff, (int)outSSPILength, 0);
+                }
 
                 WriteString(rec.attachDBFilename, _physicalStateObj);
                 if (useFeatureExt)
@@ -6312,6 +6345,7 @@ namespace System.Data.SqlClient
 
         private void ProcessSSPI(int receivedLength)
         {
+            Console.WriteLine("Process SSPI");
             SniContext outerContext = _physicalStateObj.SniContext;
             _physicalStateObj.SniContext = SniContext.Snix_ProcessSspi;
             // allocate received buffer based on length from SSPI message
@@ -6326,8 +6360,27 @@ namespace System.Data.SqlClient
             byte[] sendBuff = new byte[s_maxSSPILength];
             UInt32 sendLength = s_maxSSPILength;
 
+#if !MANAGED_SNI
             // make call for SSPI data
             SSPIData(receivedBuff, (UInt32)receivedLength, sendBuff, ref sendLength);
+#else
+            sendBuff = SNIProxy.Singleton.ValidateSSPIContext(_physicalStateObj.Handle, receivedBuff);
+            if (sendBuff != null)
+            {
+                sendLength = (uint) sendBuff.Length;
+            }
+            else
+            {
+                sendBuff = new byte[0];
+                sendLength = 0;
+            }
+
+#endif
+            Console.WriteLine("*** After make call to SSPIDATA");
+            Console.WriteLine("*** receive buffer");
+            ConsoleWriteBytes(receivedBuff);
+            Console.WriteLine("*** Send Buffer");
+            ConsoleWriteBytes(sendBuff);
 
             // DO NOT SEND LENGTH - TDS DOC INCORRECT!  JUST SEND SSPI DATA!
             _physicalStateObj.WriteByteArray(sendBuff, (int)sendLength, 0);
@@ -6364,12 +6417,14 @@ namespace System.Data.SqlClient
 #if MANAGED_SNI
                         if (0 != SNIProxy.Singleton.InitializeSspiPackage(ref maxLength))
 #else
+
                         if (0 != SNINativeMethodWrapper.SNISecInitPackage(ref maxLength))
 #endif // MANAGED_SNI
                             SSPIError(SQLMessage.SSPIInitializeError(), TdsEnums.INIT_SSPI_PACKAGE);
 
                         s_maxSSPILength = maxLength;
                         s_fSSPILoaded = true;
+
                     }
                 }
             }

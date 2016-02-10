@@ -771,9 +771,9 @@ namespace System.Data.SqlClient
         }
 
 #if MANAGED_SNI
-        internal void CreateConnectionHandle(string serverName, bool ignoreSniOpenTimeout, long timerExpire, out byte[] instanceName, byte[] spnBuffer, bool flushCache, bool async, bool parallel)
+        internal void CreateConnectionHandle(string serverName, bool ignoreSniOpenTimeout, long timerExpire, out byte[] instanceName, byte[] spnBuffer, bool flushCache, bool async, bool parallel, bool integratedSecurity)
         {
-            _sessionHandle = SNIProxy.Singleton.CreateConnectionHandle(this, serverName, ignoreSniOpenTimeout, timerExpire, out instanceName, spnBuffer, flushCache, async, parallel);
+            _sessionHandle = SNIProxy.Singleton.CreateConnectionHandle(this, serverName, ignoreSniOpenTimeout, timerExpire, out instanceName, spnBuffer, flushCache, async, parallel, integratedSecurity);
             if(_sessionHandle == null)
             {
                 _parser.ProcessSNIError(this);

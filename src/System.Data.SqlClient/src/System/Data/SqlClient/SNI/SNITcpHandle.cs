@@ -2,11 +2,13 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 
@@ -20,13 +22,18 @@ namespace System.Data.SqlClient.SNI
         private readonly string _targetServer;
         private readonly object _callbackObject;
         private readonly Socket _socket;
-        private readonly NetworkStream _tcpStream;
+        
+        private readonly SPNegoPal _spNegoPal;
+
+        //private readonly NegotiateStreamOverTdsStream _negotiateStreamOverTdsStream;
+        //private readonly NegotiateStream _negotiateStream;
         private readonly TaskScheduler _writeScheduler;
         private readonly TaskFactory _writeTaskFactory;
 
         private Stream _stream;
         private TcpClient _tcpClient;
         private SslStream _sslStream;
+        private Stream _tcpStream;
         private SslOverTdsStream _sslOverTdsStream;
         private SNIAsyncCallback _receiveCallback;
         private SNIAsyncCallback _sendCallback;
@@ -37,7 +44,7 @@ namespace System.Data.SqlClient.SNI
         private Guid _connectionId = Guid.NewGuid();
 
         private const int MaxParallelIpAddresses = 64;
-
+        
         /// <summary>
         /// Dispose object
         /// </summary>
@@ -86,6 +93,17 @@ namespace System.Data.SqlClient.SNI
                 return _status;
             }
         }
+        /// <summary>
+        /// Constructor
+        /// </summary>
+        /// <param name="serverName">Server name</param>
+        /// <param name="port">TCP port number</param>
+        /// <param name="timerExpire">Connection timer expiration</param>
+        /// <param name="callbackObject">Callback object</param>
+        public SNITCPHandle(string serverName, int port, long timerExpire, object callbackObject, bool parallel) : this(serverName, port, timerExpire, callbackObject, parallel, false){}
+
+
+        private bool _isSSPI = false;
 
         /// <summary>
         /// Constructor
@@ -94,12 +112,14 @@ namespace System.Data.SqlClient.SNI
         /// <param name="port">TCP port number</param>
         /// <param name="timerExpire">Connection timer expiration</param>
         /// <param name="callbackObject">Callback object</param>
-        public SNITCPHandle(string serverName, int port, long timerExpire, object callbackObject, bool parallel)
+        /// <param name="isSspi">is sspi</param>
+        public SNITCPHandle(string serverName, int port, long timerExpire, object callbackObject, bool parallel, bool isSspi)
         {
             _writeScheduler = new ConcurrentExclusiveSchedulerPair().ExclusiveScheduler;
             _writeTaskFactory = new TaskFactory(_writeScheduler);
             _callbackObject = callbackObject;
             _targetServer = serverName;
+            _isSSPI = isSspi;
 
             try
             {
@@ -144,25 +164,93 @@ namespace System.Data.SqlClient.SNI
                 }
 
                 _tcpClient.NoDelay = true;
+                
                 _tcpStream = _tcpClient.GetStream();
                 _socket = _tcpClient.Client;
 
-                _sslOverTdsStream = new SslOverTdsStream(_tcpStream);
+                
+                _sslOverTdsStream = new SslOverTdsStream(_tcpStream);                
                 _sslStream = new SslStream(_sslOverTdsStream, true, new RemoteCertificateValidationCallback(ValidateServerCertificate), null);
+
+                if (_isSSPI)
+                {
+                    /*
+                    //create negotiat stream
+                    Console.WriteLine("Before Create Negotiate Stream....");
+                    Console.ReadLine();
+                    _negotiateStreamOverTdsStream = new NegotiateStreamOverTdsStream(_tcpStream);
+                    _negotiateStream = new NegotiateStream(_negotiateStreamOverTdsStream);
+                    Console.WriteLine("After Create Negotiate Stream.... (username : {0} ", CredentialCache.DefaultNetworkCredentials.UserName);
+                    Console.ReadLine();
+                    */
+                    _spNegoPal = new SPNegoPal("MSSQLSvc/" + serverName);
+                }
             }
             catch (SocketException se)
             {
+                Console.WriteLine("*** NEW SNITCPHandle Socket Exception : {0}", se);
                 ReportTcpSNIError(se);
                 return;
             }
             catch (Exception e)
             {
+                Console.WriteLine("*** NEW SNITCPHandle Exception :{0} ", e);
                 ReportTcpSNIError(e);
                 return;
             }
 
             _stream = _tcpStream;
             _status = TdsEnums.SNI_SUCCESS;
+        }
+
+        /// <summary>
+        /// Enable SSPI
+        /// </summary>
+        public byte[] GetSSPIClientContext()
+        {
+            return _spNegoPal.GetOutgoingBlob(null);
+            /*
+            try
+            {
+                Console.WriteLine("Before AuthenticateSSPI....");
+                Console.ReadLine();
+                _negotiateStream.AuthenticateAsClientAsync(CredentialCache.DefaultNetworkCredentials, "MSSQLSvc/...");
+                //TODO: Try to put something on read
+                //_negotiateStream.AuthenticateAsClientAsync(); //This will return incomplete message
+                Console.WriteLine("After AuthenticateSSPI.... (username : {0} ", CredentialCache.DefaultNetworkCredentials.UserName);
+                Console.ReadLine();
+                // wait until queque is not empty
+                while (_negotiateStreamOverTdsStream.WritterBufferQueue.Count <= 0)
+                {
+                    Console.WriteLine("wait...");
+                    Task.Delay(10);
+                }
+                byte[] buffer = null;
+                while (_negotiateStreamOverTdsStream.WritterBufferQueue.Count > 0)
+                {
+                    //lst.AddRange(_negotiateStreamOverTdsStream.WritterBufferQueue.Dequeue());
+                    buffer = _negotiateStreamOverTdsStream.WritterBufferQueue.Dequeue();
+                }
+                // take the last one
+                return buffer;
+            }
+            catch (AuthenticationException aue)
+            {
+                Console.WriteLine("AuthenticateSSPI Auth Ex : " + aue);
+                throw;
+            }
+            catch (Exception ioe)
+            {
+                Console.WriteLine("AuthenticateSSPI Ex : " + ioe);
+                throw;
+            }         
+            */
+        }
+
+        public byte[] ValidateSspi(byte[] ingoingBytes)
+        {
+            return _spNegoPal.GetOutgoingBlob(ingoingBytes);
+            
         }
 
         /// <summary>
@@ -291,6 +379,7 @@ namespace System.Data.SqlClient.SNI
 
                     packet = new SNIPacket(null);
                     packet.Allocate(_bufferSize);
+                    //Console.WriteLine("*** SNITCPHANDLE READ FROM STREAM : " + _stream.ToString);
                     packet.ReadFromStream(_stream);
 
                     if (packet.Length == 0)

@@ -5,6 +5,8 @@
     "System.Collections.Concurrent": "4.0.0",
     "System.Collections.NonGeneric": "4.0.0",
     "System.Data.Common": "4.0.0",
+    "System.Console": "4.0.0-rc3-23729",
+    "System.Collections.Specialized": "4.0.0",
     "System.Diagnostics.Debug": "4.0.10",
     "System.Globalization": "4.0.10",
     "System.Linq": "4.0.0",

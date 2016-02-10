@@ -79,6 +79,18 @@ namespace System.Data.SqlClient.SNI
             throw new PlatformNotSupportedException();
         }
 
+        public byte[] GetSSPIClientContext(SNIHandle handle)
+        {
+            //TODO: KK - Add This as virtual on SNIHandleSo there is no type cast like this
+            return (handle as SNITCPHandle).GetSSPIClientContext();
+        }
+
+        public byte[] ValidateSSPIContext(SNIHandle handle, byte[] ingoingBytes)
+        {
+            //TODO: KK - Add This as virtual on SNIHandleSo there is no type cast like this
+            return (handle as SNITCPHandle).ValidateSspi(ingoingBytes);
+        }
+
         /// <summary>
         /// Initialize SSPI
         /// </summary>
@@ -185,7 +197,7 @@ namespace System.Data.SqlClient.SNI
         /// <param name="async">Asynchronous connection</param>
         /// <param name="parallel">Attempt parallel connects</param>
         /// <returns>SNI handle</returns>
-        public SNIHandle CreateConnectionHandle(object callbackObject, string fullServerName, bool ignoreSniOpenTimeout, long timerExpire, out byte[] instanceName, byte[] spnBuffer, bool flushCache, bool async, bool parallel)
+        public SNIHandle CreateConnectionHandle(object callbackObject, string fullServerName, bool ignoreSniOpenTimeout, long timerExpire, out byte[] instanceName, byte[] spnBuffer, bool flushCache, bool async, bool parallel, bool integratedSecurity)
         {
             instanceName = new byte[1];
             instanceName[0] = 0;
@@ -201,13 +213,13 @@ namespace System.Data.SqlClient.SNI
             // Default to using tcp if no protocol is provided
             if (serverNameParts.Length == 1)
             {
-                return CreateTcpHandle(serverNameParts[0], timerExpire, callbackObject, parallel);
+                return CreateTcpHandle(serverNameParts[0], timerExpire, callbackObject, parallel, integratedSecurity);
             }
 
             switch (serverNameParts[0])
             {
                 case TdsEnums.TCP:
-                    return CreateTcpHandle(serverNameParts[1], timerExpire, callbackObject, parallel);
+                    return CreateTcpHandle(serverNameParts[1], timerExpire, callbackObject, parallel, integratedSecurity);
 
                 case TdsEnums.NP:
                     return CreateNpHandle(serverNameParts[1], timerExpire, callbackObject, parallel);
@@ -233,7 +245,7 @@ namespace System.Data.SqlClient.SNI
         /// <param name="callbackObject">Asynchronous I/O callback object</param>
         /// <param name="parallel">Should MultiSubnetFailover be used</param>
         /// <returns>SNITCPHandle</returns>
-        private SNITCPHandle CreateTcpHandle(string fullServerName, long timerExpire, object callbackObject, bool parallel)
+        private SNITCPHandle CreateTcpHandle(string fullServerName, long timerExpire, object callbackObject, bool parallel, bool isSspi)
         {
             // TCP Format: 
             // tcp:<host name>\<instance name>
@@ -259,7 +271,7 @@ namespace System.Data.SqlClient.SNI
                 return null;
             }
 
-            return new SNITCPHandle(serverAndPortParts[0], portNumber, timerExpire, callbackObject, parallel);
+            return new SNITCPHandle(serverAndPortParts[0], portNumber, timerExpire, callbackObject, parallel, isSspi);
         }
 
         /// <summary>
