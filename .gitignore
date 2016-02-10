@@ -254,3 +254,7 @@ Temporary Items
 Session.vim
 .netrwhist
 *~
+
+
+# Ignore tests
+../../../../../src/System.Data.SqlClient/tests/ExceptionTest.cs
